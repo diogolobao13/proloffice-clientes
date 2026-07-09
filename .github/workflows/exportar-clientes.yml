@@ -1,0 +1,27 @@
+name: Exportar clientes Conexa
+
+on:
+  schedule:
+    - cron: "0 */8 * * *"   # a cada 8 horas (UTC)
+  workflow_dispatch: {}      # permite rodar manualmente
+
+jobs:
+  exportar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Rodar robô
+        env:
+          CONEXA_USER: ${{ secrets.CONEXA_USER }}
+          CONEXA_PASS: ${{ secrets.CONEXA_PASS }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        run: python exportar_clientes.py
