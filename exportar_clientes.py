@@ -119,8 +119,56 @@ def ler_planilha(conteudo: bytes):
     return colunas, linhas
 
 
+import unicodedata
+
+
 def _norm(txt) -> str:
-    return " ".join(str(txt).split()).casefold()
+    """normaliza: sem acentos, minúsculas, espaços únicos."""
+    s = " ".join(str(txt).split()).casefold()
+    return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+
+
+_STOPWORDS = {"de", "da", "do", "para", "e", "em", "a", "o"}
+
+
+def _tokens(txt) -> set:
+    return {t for t in _norm(txt).replace("/", " ").split() if t not in _STOPWORDS}
+
+
+def match_fuzzy(valor, mapa_nome_id):
+    """Casa um texto com a tabela nome->id: exato primeiro, depois por tokens.
+
+    Ex.: Tag "Auditório" casa com "Aluguel de Auditório";
+    "Sala de reunião para 06 pessoas" casa com "Aluguel de sala de reunião 06 pessoas".
+    """
+    if not valor:
+        return None
+    chave = _norm(valor)
+    if chave in mapa_nome_id:
+        return mapa_nome_id[chave]
+
+    tv = _tokens(valor)
+    if not tv:
+        return None
+    melhor, melhor_score = None, 0.0
+    for nome, id_ in mapa_nome_id.items():
+        tn = _tokens(nome)
+        if not tn:
+            continue
+        inter = tv & tn
+        # um lado precisa estar (quase) contido no outro
+        score = len(inter) / min(len(tv), len(tn))
+        if score >= 0.99 and len(inter) > melhor_score:
+            melhor, melhor_score = id_, len(inter)
+    return melhor
+
+
+# De-para manual para valores de Origem que não existem na tabela do CRM.
+# Ex.: DE_PARA_ORIGEM = {"cadastro publico": 13}
+DE_PARA_ORIGEM = {}
+
+# Quando não encontrar correspondência, usa o ID de "Outros" da própria tabela.
+FALLBACK_OUTROS = True
 
 
 def buscar_mapas_crm():
@@ -147,15 +195,39 @@ def buscar_mapas_crm():
 
 
 def anexar_ids(colunas, linhas, origens, interesses):
-    """Adiciona origem_id e interesse_id a cada linha, casando pelo nome."""
+    """Adiciona origem_id e interesse_id a cada linha.
+
+    Origem: coluna "Origem" (com de-para manual para valores fora da tabela).
+    Interesse: coluna "Interesse" se existir; senão usa "Tags" (é onde o
+    interesse aparece no export de clientes), com casamento aproximado.
+    """
     col_origem = next((c for c in colunas if "origem" in _norm(c)), None)
-    col_interesse = next((c for c in colunas if "interesse" in _norm(c)), None)
+    col_interesse = next(
+        (c for c in colunas if "interesse" in _norm(c)),
+        next((c for c in colunas if _norm(c) == "tags"), None),
+    )
 
     for linha in linhas:
         v_origem = linha.get(col_origem) if col_origem else None
         v_interesse = linha.get(col_interesse) if col_interesse else None
-        linha["origem_id"] = origens.get(_norm(v_origem)) if v_origem else None
-        linha["interesse_id"] = interesses.get(_norm(v_interesse)) if v_interesse else None
+
+        origem_id = origens.get(_norm(v_origem)) if v_origem else None
+        if origem_id is None and v_origem:
+            origem_id = DE_PARA_ORIGEM.get(_norm(v_origem))
+        if origem_id is None and FALLBACK_OUTROS:
+            origem_id = origens.get("outros")
+        linha["origem_id"] = origem_id
+
+        interesse_id = None
+        if v_interesse:
+            # Tags podem vir múltiplas separadas por ; ou , — usa a 1ª que casar
+            for parte in str(v_interesse).replace(";", ",").split(","):
+                interesse_id = match_fuzzy(parte.strip(), interesses)
+                if interesse_id is not None:
+                    break
+        if interesse_id is None and FALLBACK_OUTROS:
+            interesse_id = interesses.get("outros")
+        linha["interesse_id"] = interesse_id
     return linhas
 
 
