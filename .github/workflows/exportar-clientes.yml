@@ -24,4 +24,5 @@ jobs:
           CONEXA_USER: ${{ secrets.CONEXA_USER }}
           CONEXA_PASS: ${{ secrets.CONEXA_PASS }}
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          CONEXA_API_TOKEN: ${{ secrets.CONEXA_API_TOKEN }}
         run: python exportar_clientes.py
